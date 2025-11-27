@@ -162,25 +162,46 @@ const Card: React.FC<{
 
           return (
             <>
-              {existingRows.map(renderRow)}
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-medium text-slate-700">Existing Entries</h3>
+                        <span className="text-xs text-slate-500">Saved</span>
+                      </div>
+                      <div className="space-y-4">
+                        {existingRows.length === 0 ? (
+                          <div className="text-sm text-slate-500">No entries</div>
+                        ) : (
+                          existingRows.map((r) => (
+                            <div key={r.id} className="p-3 bg-white rounded-md border">
+                              {renderRow(r)}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
 
-              {newRows.length > 0 && (
-                <div className="pt-4">
-                  <div className="border-t pt-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-sm font-medium text-slate-600">New Entries</h3>
-                      <span className="text-xs text-slate-500">Recently added</span>
-                    </div>
-                    <div className="space-y-4">
-                      {newRows.map((r) => (
-                        <div key={r.id} className="p-3 bg-white rounded-md border">
-                          {renderRow(r)}
+                    {newRows.length > 0 && (
+                      <div className="pt-4">
+                        <div className="border-t pt-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-medium text-amber-700">New Entries</h3>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-amber-600">{newRows.length} new</span>
+                              <button onClick={() => setShowNewOnly(true)} className="text-xs text-amber-600 underline">Focus</button>
+                            </div>
+                          </div>
+                          <div className="space-y-4">
+                            {newRows.map((r) => (
+                              <div key={r.id} className="p-3 bg-white rounded-md border">
+                                {renderRow(r)}
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
             </>
           );
         })()}
@@ -237,3 +258,4 @@ export const Settings: React.FC = () => {
 };
 
 export default Settings;
+

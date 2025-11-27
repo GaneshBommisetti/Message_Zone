@@ -75,7 +75,7 @@ const SUPPORT_TOPICS: Topic[] = [
 const STORAGE_KEY = 'support_conversations_v1';
 const UNREAD_KEY = 'support_unread_v1';
 
-function readConversations(): Record<string, { topic?: string; issueId?: string; messages: any[] }> {
+function readConversations(): Record<string, { topic?: string; issueId?: string; messages: any[]; resolved?: boolean; resolvedBy?: string; resolvedAt?: string }> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
@@ -107,42 +107,50 @@ function writeUnreadMap(m: Record<string, number>) {
 
 export default function Support() {
   const [activeTopic, setActiveTopic] = useState<string>(SUPPORT_TOPICS[0].id);
-  const [activeIssue, setActiveIssue] = useState<Issue | null>(SUPPORT_TOPICS[0].issues[0]);
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const convs = readConversations();
-    const id = SUPPORT_TOPICS[0].issues[0].id;
-    if (convs[id] && convs[id].messages) return convs[id].messages;
-    return [{ id: 'm1', from: 'admin' as Message['from'], text: 'Welcome — how can we help?', time: new Date().toLocaleTimeString(), status: 'delivered' as Message['status'] }];
-  });
+  // require explicit issue click to open the chat panel
+  const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [convResolved, setConvResolved] = useState(false);
 
   useEffect(() => {
     // load messages from storage for the selected issue
-    if (!activeIssue) return;
+    if (!activeIssue) {
+      setMessages([]);
+      setConvResolved(false);
+      return;
+    }
     const convs = readConversations();
     const key = activeIssue.id;
     if (convs[key] && convs[key].messages) {
       setMessages(convs[key].messages);
+      setConvResolved(!!convs[key].resolved);
     } else {
       const welcome = { id: 'm1', from: 'admin' as Message['from'], text: `Topic: ${activeTopic} — open conversation for ${activeIssue?.title}`, time: new Date().toLocaleTimeString(), status: 'delivered' as Message['status'] };
       setMessages([welcome]);
-      // also persist initial welcome so admin can see it
+      // persist initial welcome so admin can see it
       convs[key] = { topic: activeTopic, issueId: key, messages: [welcome] };
       writeConversations(convs);
+      setConvResolved(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIssue]);
 
   function sendMessage() {
     if (!input.trim()) return;
+    // prevent sending to resolved conversation
+    if (activeIssue) {
+      const conv = readConversations()[activeIssue.id];
+      if (conv && conv.resolved) return;
+    }
     const id = 'm_' + Math.random().toString(36).slice(2, 9);
     const msg: Message = { id, from: 'vendor' as Message['from'], text: input.trim(), time: new Date().toLocaleTimeString(), status: 'sending' as Message['status'] };
     setMessages((m) => {
       const next = [...m, msg];
-      // persist
+      // persist (preserve metadata)
       if (activeIssue) {
         const convs = readConversations();
-        convs[activeIssue.id] = { topic: activeTopic, issueId: activeIssue.id, messages: next };
+        convs[activeIssue.id] = { ...(convs[activeIssue.id] || {}), topic: activeTopic, issueId: activeIssue.id, messages: next };
         writeConversations(convs);
           // increment unread counter for admin
           try {
@@ -156,8 +164,8 @@ export default function Support() {
             }
           } catch {}
       }
-          // notify other parts of the app
-          try { window.dispatchEvent(new CustomEvent('support-updated')); } catch {}
+              // notify other parts of the app
+              try { window.dispatchEvent(new CustomEvent('support-updated')); } catch {}
           return next;
     });
     setInput('');
@@ -168,7 +176,7 @@ export default function Support() {
         const next = m.map((mm) => (mm.id === id ? { ...mm, status: 'sent' as Message['status'] } : mm));
         if (activeIssue) {
           const convs = readConversations();
-          convs[activeIssue.id] = { topic: activeTopic, issueId: activeIssue.id, messages: next };
+          convs[activeIssue.id] = { ...(convs[activeIssue.id] || {}), topic: activeTopic, issueId: activeIssue.id, messages: next };
           writeConversations(convs);
             try { window.dispatchEvent(new CustomEvent('support-updated')); } catch {}
         }
@@ -180,7 +188,7 @@ export default function Support() {
         const next = m.map((mm) => (mm.id === id ? { ...mm, status: 'delivered' as Message['status'] } : mm));
         if (activeIssue) {
           const convs = readConversations();
-          convs[activeIssue.id] = { topic: activeTopic, issueId: activeIssue.id, messages: next };
+          convs[activeIssue.id] = { ...(convs[activeIssue.id] || {}), topic: activeTopic, issueId: activeIssue.id, messages: next };
           writeConversations(convs);
             try { window.dispatchEvent(new CustomEvent('support-updated')); } catch {}
         }
@@ -207,10 +215,13 @@ export default function Support() {
     if (!activeIssue) return;
     try {
       const convs = readConversations();
-      if (convs[activeIssue.id]) {
-        delete convs[activeIssue.id];
-        writeConversations(convs);
-      }
+      const key = activeIssue.id;
+      const cur = convs[key] || { topic: activeTopic, issueId: key, messages: messages };
+      cur.resolved = true;
+      cur.resolvedBy = 'vendor';
+      cur.resolvedAt = new Date().toISOString();
+      convs[key] = cur;
+      writeConversations(convs);
     } catch {}
     try {
       const unread = readUnreadMap();
@@ -220,12 +231,8 @@ export default function Support() {
       }
     } catch {}
     try { window.dispatchEvent(new CustomEvent('support-updated')); } catch {}
-    // clear UI for resolved conversation
-    setMessages([]);
-    // move to another issue in the same topic if available; otherwise clear selection
-    const topicObj = SUPPORT_TOPICS.find((t) => t.id === activeTopic);
-    const next = topicObj?.issues.find((i) => i.id !== activeIssue.id) ?? null;
-    setActiveIssue(next as Issue | null);
+    // mark local UI resolved state
+    setConvResolved(true);
   }
 
   return (
@@ -283,12 +290,16 @@ export default function Support() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="text-lg font-semibold">{activeIssue?.title}</div>
-              <div className="text-xs text-slate-500">{activeIssue?.id} • {SUPPORT_TOPICS.find(t => t.id === activeTopic)?.title}</div>
+                <div className="text-xs text-slate-500">{activeIssue?.id} • {SUPPORT_TOPICS.find(t => t.id === activeTopic)?.title}</div>
             </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-xs text-slate-500">Status: <span className="font-medium text-slate-700">Open</span></div>
-                      <button onClick={() => resolveIssue()} className="text-xs px-3 py-1 bg-rose-600 text-white rounded">Resolve</button>
-                    </div>
+                      <div className="flex items-center gap-3">
+                        {activeIssue && readConversations()[activeIssue.id]?.resolved ? (
+                          <div className="text-xs text-emerald-700">Resolved</div>
+                        ) : (
+                          <div className="text-xs text-slate-500">Status: <span className="font-medium text-slate-700">Open</span></div>
+                        )}
+                        <button onClick={() => resolveIssue()} className="text-xs px-3 py-1 bg-rose-600 text-white rounded">Resolve</button>
+                      </div>
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-[56vh] pr-2">
